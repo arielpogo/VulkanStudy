@@ -6,8 +6,8 @@ VulkanTest: main.cpp
 	
 .PHONY: test clean
 
-test: VulkanTest
-	./VulkanTest
+test: VulkanStudy
+	./VulkanStudy
 	
 clean:
-	rm -f VulkanTest
+	rm -f VulkanStudy
