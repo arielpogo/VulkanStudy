@@ -7,8 +7,20 @@
 #include <cstdlib>
 #include <vector>
 
+#include <cstring>
+
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+
+const std::vector<const char*> validationLayers = {
+	"VK_LAYER_KHRONOS_validation"
+};
+
+#ifndef NDEBUG
+	const bool enableValidationLayers = false;
+#else
+	const bool enableValidationLayers = true;
+#endif
 
 class Application{
 public:
@@ -35,6 +47,8 @@ private:
 	}
 
 	void createInstance(){
+		if(enableValidationLayers && !checkValidationLayerSupport()) throw std::runtime_error("Validation layer(s) requested, but not available\n");
+
 		//technically optional, but provides useful optimization info to the driver
 		VkApplicationInfo appInfo{};
 		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -75,7 +89,37 @@ private:
 
 		createInfo.enabledLayerCount = 0;
 
+		if(enableValidationLayers){
+			createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+			createInfo.ppEnabledLayerNames = validationLayers.data();
+		}
+		else createInfo.enabledLayerCount = 0;
+
 		if(vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) throw std::runtime_error("Failed to create Vulkan instance!");
+	}
+
+	bool checkValidationLayerSupport(){
+		uint32_t layerCount;
+
+		//just count
+		vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+		std::vector<VkLayerProperties> availableLayers(layerCount);
+
+		//poll for all validation layers
+		vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+
+		bool found = false;
+		for(const char* layerName : validationLayers){
+			for(const auto& availableLayer : availableLayers){
+				if(strcmp(layerName, availableLayer.layerName) == 0){
+					found = true;
+					break;
+				}
+				if(!found) return false;
+			}
+		}
+
+		return false;
 	}
 
 	void mainLoop(){
