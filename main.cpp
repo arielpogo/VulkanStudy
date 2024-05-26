@@ -44,6 +44,7 @@ private:
 
 	void initVulkan(){
 		createInstance();
+		pickPhysicalDevice();
 	}
 
 	void createInstance(){
@@ -122,6 +123,39 @@ private:
 		return false;
 	}
 
+	void pickPhysicalDevice(){
+		uint32_t deviceCount = 0;
+
+		//again, just count
+		vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+	
+		if(deviceCount == 0) throw std::runtime_error("Failed to find GPUs with Vulkan support\n");
+
+		std::vector<VkPhysicalDevice> devices(deviceCount);
+
+		//poll for devices now
+		vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+
+		for(const auto& d : devices){
+			if(isDeviceSuitable(d){
+				physicalDevice = d;
+				break;
+			}
+		}
+
+		if(physicalDevice == VK_NULL_HANDLE) throw std::runtime_error("Failed to find a suitable GPU\n");
+	}
+
+	bool isDeviceSuitable(VkPhysicalDevice device){
+		VkPhysicalDeviceProperties deviceProperties;
+		vkGetPhysicalDeviceProperties(device, deviceProperties);
+		
+		VkPhysicalDeviceFeatures deviceFeatures;
+		vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+		return true;
+	}
+
 	void mainLoop(){
 		while(!glfwWindowShouldClose(window)){
 			glfwPollEvents();
@@ -130,6 +164,7 @@ private:
 	}
 
 	void cleanup(){
+		//physical dev. handler is implicitly deleted, no need to do anything
 		vkDestroyInstance(instance, nullptr);
 
 		glfwDestroyWindow(window);
@@ -140,6 +175,7 @@ private:
 
 	GLFWwindow* window;
 	VkInstance instance;
+	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 };
 
 int main(){
