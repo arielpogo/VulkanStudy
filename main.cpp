@@ -54,6 +54,7 @@ private:
 	void initVulkan(){
 		createInstance();
 		pickPhysicalDevice();
+		createLogicalDevice();
 	}
 
 	void createInstance(){
@@ -115,9 +116,10 @@ private:
 		vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
 		std::vector<VkLayerProperties> availableLayers(layerCount);
 
-		//poll for all validation layers
+		//enumerate all available validation layers (into the vector)
 		vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
-
+		
+		//check if each validation layer we want is available
 		bool found = false;
 		for(const char* layerName : validationLayers){
 			for(const auto& availableLayer : availableLayers){
@@ -142,9 +144,10 @@ private:
 
 		std::vector<VkPhysicalDevice> devices(deviceCount);
 
-		//poll for devices now
+		//enumerate all available devices into the vector
 		vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
+		//pick first suitable device
 		for(const auto& d : devices){
 			if(isDeviceSuitable(d)){
 				physicalDevice = d;
@@ -162,6 +165,7 @@ private:
 		VkPhysicalDeviceFeatures deviceFeatures;
 		vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
 
+		//find and get all indices of required queue families
 		QueueFamilyIndices indices = findQueueFamilies(device);
 		return indices.isComplete();
 	}
@@ -188,6 +192,46 @@ private:
 		return indices;
 	}
 
+	void createLogicalDevice(){
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+		//queues to be created
+		VkDeviceQueueCreateInfo queueCreateInfo{};
+		queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
+		queueCreateInfo.queueCount = 1;
+
+		float queuePriority = 1.0f;
+		queueCreateInfo.pQueuePriorities = &queuePriority;
+
+		//specifying what device features are needed
+		VkPhysicalDeviceFeatures deviceFeatures{};
+
+		//creating the logical device
+		VkDeviceCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+		createInfo.pQueueCreateInfos = &queueCreateInfo;
+		createInfo.queueCreateInfoCount = 1;
+
+		createInfo.pEnabledFeatures = &deviceFeatures;
+
+		createInfo.enabledExtensionCount = 0;
+
+		//not needed anymore, but req. for older implementations
+		if(enableValidationLayers){
+			createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+			createInfo.ppEnabledLayerNames = validationLayers.data();
+		} else{
+			createInfo.enabledLayerCount = 0;
+		}
+		
+
+		if(vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) throw std::runtime_error("Failed to create logical device\n");
+
+		//get a handle to the created graphics queue
+		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+	}
+
 	void mainLoop(){
 		while(!glfwWindowShouldClose(window)){
 			glfwPollEvents();
@@ -198,16 +242,18 @@ private:
 	void cleanup(){
 		//physical dev. handler is implicitly deleted, no need to do anything
 		vkDestroyInstance(instance, nullptr);
+		vkDestroyDevice(device, nullptr);
 
 		glfwDestroyWindow(window);
-
 		glfwTerminate();
-
 	}
 
 	GLFWwindow* window;
 	VkInstance instance;
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+	VkDevice device; //logical device opposed to physical device
+	
+	VkQueue graphicsQueue;
 };
 
 int main(){
