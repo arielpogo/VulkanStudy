@@ -11,6 +11,8 @@
 
 #include <cstring>
 
+#define DEBUG 1
+
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
@@ -18,7 +20,11 @@ const std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
 };
 
-#ifndef NDEBUG
+const std::vector<const char*> deviceExtensions = {
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME
+};
+
+#ifndef DEBUG
 	const bool enableValidationLayers = false;
 #else
 	const bool enableValidationLayers = true;
@@ -31,6 +37,12 @@ struct QueueFamilyIndices{
 	bool isComplete(){
 		return graphicsFamily.has_value() && presentFamily.has_value();
 	}
+};
+
+struct SwapChainSupportDetails{
+	VkSurfaceCapabilitiesKHR capabilities;
+	std::vector<VkSurfaceFormatKHR> formats;
+	std::vector<VkPresentModeKHR> presentModes;
 };
 
 class Application{
@@ -94,9 +106,7 @@ private:
 		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
 
 		std::cout << "Available extensions:\n";
-		for(const auto& e : extensions){
-			std::cout << '\t' << e.extensionName << '\n';
-		}
+		for(const auto& e : extensions) std::cout << '\t' << e.extensionName << '\n';
 			
 		createInfo.enabledExtensionCount = glfwExtensionCount;
 		createInfo.ppEnabledExtensionNames = glfwExtensions;
@@ -121,7 +131,10 @@ private:
 
 		//enumerate all available validation layers (into the vector)
 		vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
-		
+
+		std::cout << "Available validation layers:\n";
+	       	for(const auto& availableLayer : availableLayers) std::cout << '\t' << availableLayer.layerName << '\n';
+
 		//check if each validation layer we want is available
 		bool found = false;
 		for(const char* layerName : validationLayers){
@@ -130,12 +143,15 @@ private:
 					found = true;
 					break;
 				}
-				if(!found) return false;
+			}
+			if(!found) {
+				std::cout << "Unable to find validation layer: " << layerName << '\n';
+				return false;
 			}
 		}
 
-		return false;
-	}
+		return true;
+	}	
 
 	void createSurface(){
 		if(glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create window surface\n");
@@ -174,7 +190,30 @@ private:
 
 		//find and get all indices of required queue families
 		QueueFamilyIndices indices = findQueueFamilies(device);
-		return indices.isComplete();
+		bool allExtensionsSupported = checkDeviceExtensionSupport(device);
+
+		bool swapChainAdequate = false;
+		if(allExtensionsSupported){
+			SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+			swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+		}
+
+		return indices.isComplete() && allExtensionsSupported && swapChainAdequate;
+	}
+
+	bool checkDeviceExtensionSupport(VkPhysicalDevice device){
+		uint32_t extensionCount;
+
+		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+		std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+		vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+		std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+
+		for(const auto& e : availableExtensions) requiredExtensions.erase(e.extensionName);
+
+		return requiredExtensions.empty();
 	}
 
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device){
@@ -200,11 +239,36 @@ private:
 		
 		return indices;
 	}
+	
+	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device){
+		SwapChainSupportDetails details;
+		
+		//basic surface capabilities (min/max number of images in the swap chain, min/max width, height of images etc.)
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+		uint32_t surfaceFormatCount = 0;
+		vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &surfaceFormatCount, nullptr);
+
+		if(surfaceFormatCount != 0){
+			details.formats.resize(surfaceFormatCount);
+			vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &surfaceFormatCount, details.formats.data());
+		}
+
+		uint32_t presentModeCount = 0;
+		vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+
+		if(presentModeCount != 0){
+			details.presentModes.resize(presentModeCount);
+			vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+		}
+
+		return details;
+	}
 
 	void createLogicalDevice(){
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
-		//queue to be created (graphics), to make more you need to make an array
+		//queues to be created
 		std::vector<VkDeviceQueueCreateInfo> queueCreateInfos{};
 		std::set<uint32_t> uniqueQueueFamilies = {
 			indices.graphicsFamily.value(),
@@ -232,7 +296,8 @@ private:
 		createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 
 		createInfo.pEnabledFeatures = &deviceFeatures;
-		createInfo.enabledExtensionCount = 0;
+		createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+		createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
 		//not needed anymore, but req. for older implementations
 		if(enableValidationLayers){
@@ -248,6 +313,8 @@ private:
 		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
 		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 	}
+
+	
 
 	void mainLoop(){
 		while(!glfwWindowShouldClose(window)){
