@@ -8,8 +8,11 @@
 #include <vector>
 #include <optional>
 #include <set>
+#include <limits>
+#include <algorithm>
 
 #include <cstring>
+#include <cstdint>
 
 #define DEBUG 1
 
@@ -39,7 +42,7 @@ struct QueueFamilyIndices{
 	}
 };
 
-struct SwapChainSupportDetails{
+struct SwapchainSupportDetails{
 	VkSurfaceCapabilitiesKHR capabilities;
 	std::vector<VkSurfaceFormatKHR> formats;
 	std::vector<VkPresentModeKHR> presentModes;
@@ -70,6 +73,7 @@ private:
 		createSurface(); //influences what device may get picked
 		pickPhysicalDevice();
 		createLogicalDevice();
+		createSwapchain();
 	}
 
 	void createInstance(){
@@ -192,13 +196,13 @@ private:
 		QueueFamilyIndices indices = findQueueFamilies(device);
 		bool allExtensionsSupported = checkDeviceExtensionSupport(device);
 
-		bool swapChainAdequate = false;
+		bool swapchainAdequate = false;
 		if(allExtensionsSupported){
-			SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
-			swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+			SwapchainSupportDetails swapchainSupport = querySwapchainSupport(device);
+			swapchainAdequate = !swapchainSupport.formats.empty() && !swapchainSupport.presentModes.empty();
 		}
 
-		return indices.isComplete() && allExtensionsSupported && swapChainAdequate;
+		return indices.isComplete() && allExtensionsSupported && swapchainAdequate;
 	}
 
 	bool checkDeviceExtensionSupport(VkPhysicalDevice device){
@@ -240,8 +244,8 @@ private:
 		return indices;
 	}
 	
-	SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device){
-		SwapChainSupportDetails details;
+	SwapchainSupportDetails querySwapchainSupport(VkPhysicalDevice device){
+		SwapchainSupportDetails details;
 		
 		//basic surface capabilities (min/max number of images in the swap chain, min/max width, height of images etc.)
 		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
@@ -314,7 +318,105 @@ private:
 		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
 	}
 
-	
+	void createSwapchain(){
+		SwapchainSupportDetails swapchainSupport = querySwapchainSupport(physicalDevice);
+
+		VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapchainSupport.formats);
+		VkPresentModeKHR presentMode = chooseSwapPresentMode(swapchainSupport.presentModes);
+		VkExtent2D extent = chooseSwapExtent(swapchainSupport.capabilities);
+
+		//+1 because we don't want to have to wait on the driver to do internal operations before acquiring another image to render to
+		uint32_t imageCount = swapchainSupport.capabilities.minImageCount + 1;
+
+		if(swapchainSupport.capabilities.maxImageCount > 0 && imageCount > swapchainSupport.capabilities.maxImageCount) imageCount = swapchainSupport.capabilities.maxImageCount;
+
+		VkSwapchainCreateInfoKHR createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+		createInfo.surface = surface;
+		
+		createInfo.minImageCount = imageCount;
+		createInfo.imageFormat = surfaceFormat.format;
+		createInfo.imageColorSpace = surfaceFormat.colorSpace;
+		createInfo.imageExtent = extent;
+		createInfo.imageArrayLayers = 1; //>1 for stereoscopic 3D images
+		createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; //directly render to images (different bits, such as VK_IMAGE_USAGE_TRANSFER_DST_BIT would be used for postprocessing, for example)
+		
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+		uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+
+		if(indices.graphicsFamily != indices.presentFamily){
+			createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT; //multiple queues have to share an image simultaneously
+			createInfo.queueFamilyIndexCount = 2;
+			createInfo.pQueueFamilyIndices = queueFamilyIndices;
+
+		}
+		else{
+			createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE; //one queue has ownership at a time, must be explicitly changed (better performance)
+			createInfo.queueFamilyIndexCount = 0; //optional
+			createInfo.pQueueFamilyIndices = nullptr; //optional
+		}
+		
+		createInfo.preTransform = swapchainSupport.capabilities.currentTransform; //do not flip the image by applying some transform
+		createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; //compositeAlpha is if alpha channel should be for blending with other windows in the windowing system. We don't want this, so we ignore it with the value it's set to
+		createInfo.presentMode = presentMode;
+		createInfo.clipped = VK_TRUE; //if another window blocks some pixels on the screen, don't render those pixels
+		
+		createInfo.oldSwapchain = VK_NULL_HANDLE; //if a swap chain becomes invalid/unoptimized and is completely recreated, the onld one must go here (for a complex reason)
+
+		if(vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapchain) != VK_SUCCESS) throw std::runtime_error("Failed to create swapchain.\n");
+	}
+
+	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats){
+		//we want to search for B, G, R, A to be stored in an 8 bit unsigned int, and that SRGB is supported
+		for(const auto& availableFormat : availableFormats){
+			if(availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) return availableFormat;
+		}
+
+		//failed, just use the first one specified
+		return availableFormats[0];
+	}
+
+	VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes){
+		/* Types of present modes:
+		 * IMMEDIATE_KHR - images are transferred right away, may result in tearing
+		 * FIFO_KHR - top of queue is displayed when display refreshes, the program places new images at the back. If the queue is full, the program must wait. Most similar to "vsync"
+		 * FIFO_RELAXED_KHR - differs from the previous only if the app is late and the queue was empty at the display refresh (display refresh is aka "vertical blank"), then when the image is ready it is immediately displayed instead of waiting for the next vertical blank. May cause tearing
+		 * MAILBOX_KHR - variation of FIFO_KHR where instead of blocking the app when the queue is full, the images alread queued are replaced with more, newer images. So, frames are rendered as fast as possible without tearing, so less latency issues than vsync. AKA triple buffering, but this doesn't mean that the framerate is truly unlocked.
+		 */
+		
+		//mailbox is a good tradeoff if energy use is not a concern. If it is (like in mobile devices), then FIFO_KHR is likely better
+		/*for(const auto& availablePresentMode : availablePresentModes){
+		if(availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) return availablePresentMode;
+		}*/
+
+
+		//guaranteed to be available if anything
+		return VK_PRESENT_MODE_FIFO_KHR;
+	}
+
+	//swap extent == resolution
+	VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities){
+		//Vulkan tells us to match the resolution of the window by setting the "width" and "height" in the "currentExtent" member
+		//However, some window managers allow us to differ here, so we can use the magic value of the max of uint32_t, so we can pick the resolution that best matches the window w/i minImageExtent and maxImageExtent bounds
+		//But we must specify the resolution in the correct unit
+		
+		//GLFW uses two units for sizes: pixels and screen coordinates. Vulkan works with pixels. If you use high DPI displays s.a. Apple's retina displays, screen coordinates don't correspond to pixels, instead because of high pixel density, the resolution of the window in pixels will be large than in screen coordinates. 
+		//So, we must use glfwGetFramebufferSize to get the res of the window in pixels before matching it against min/max
+		
+		if(capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) return capabilities.currentExtent;
+
+		int width, height;
+		glfwGetFramebufferSize(window, &width, &height);
+		VkExtent2D actualExtent = {
+			static_cast<uint32_t>(width),
+			static_cast<uint32_t>(height)
+		};
+		
+		actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+		actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+
+		return actualExtent;
+	}
 
 	void mainLoop(){
 		while(!glfwWindowShouldClose(window)){
@@ -325,8 +427,10 @@ private:
 	void cleanup(){
 		//physical dev. handler is implicitly deleted, no need to do anything
 
+		vkDestroySwapchainKHR(device, swapchain, nullptr); //swapchain must be deleted before the surface
 		vkDestroySurfaceKHR(instance, surface, nullptr); //surface must be deleted before the instance
 		vkDestroyInstance(instance, nullptr);
+		
 		vkDestroyDevice(device, nullptr);
 
 		glfwDestroyWindow(window);
@@ -336,12 +440,15 @@ private:
 	GLFWwindow* window;
 	VkInstance instance;
 	VkSurfaceKHR surface;
+	VkSwapchainKHR swapchain;
 
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 	VkDevice device; //logical device opposed to physical device
 	
 	VkQueue graphicsQueue;
 	VkQueue presentQueue;
+
+	std::vector<VkImage> swapchainImages; //auto cleaned by destroying the swapchain
 };
 
 int main(){
