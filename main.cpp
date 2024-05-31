@@ -74,6 +74,7 @@ private:
 		pickPhysicalDevice();
 		createLogicalDevice();
 		createSwapchain();
+		createImageViews();
 	}
 
 	void createInstance(){
@@ -364,6 +365,13 @@ private:
 		createInfo.oldSwapchain = VK_NULL_HANDLE; //if a swap chain becomes invalid/unoptimized and is completely recreated, the onld one must go here (for a complex reason)
 
 		if(vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapchain) != VK_SUCCESS) throw std::runtime_error("Failed to create swapchain.\n");
+
+		vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
+		swapchainImages.resize(imageCount);
+		vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
+
+		swapchainImageFormat = surfaceFormat.format;
+		swapchainExtent = extent;
 	}
 
 	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats){
@@ -418,6 +426,33 @@ private:
 		return actualExtent;
 	}
 
+	void createImageViews(){
+		swapchainImageViews.resize(swapchainImages.size());
+
+		for(size_t i = 0; i < swapchainImages.size(); ++i){
+			VkImageViewCreateInfo createInfo{};
+			createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			createInfo.image = swapchainImages[i];
+
+			createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			createInfo.format = swapchainImageFormat;
+
+			//default color swizzling (do nothing)
+			createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+			createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			createInfo.subresourceRange.baseMipLevel = 0;
+			createInfo.subresourceRange.levelCount = 1;
+			createInfo.subresourceRange.baseArrayLayer = 0;
+			createInfo.subresourceRange. layerCount = 1;
+
+			if(vkCreateImageView(device, &createInfo, nullptr, &swapchainImageViews[i]) != VK_SUCCESS) throw std::runtime_error("Failed to create image views.\n");
+		}
+	}
+
 	void mainLoop(){
 		while(!glfwWindowShouldClose(window)){
 			glfwPollEvents();
@@ -425,14 +460,12 @@ private:
 	}
 
 	void cleanup(){
-		//physical dev. handler is implicitly deleted, no need to do anything
+		for(auto imageView : swapchainImageViews) vkDestroyImageView(device, imageView, nullptr);
 
 		vkDestroySwapchainKHR(device, swapchain, nullptr); //swapchain must be deleted before the surface
+		vkDestroyDevice(device, nullptr); //physical dev. handler is implicitly deleted, no need to do anything
 		vkDestroySurfaceKHR(instance, surface, nullptr); //surface must be deleted before the instance
 		vkDestroyInstance(instance, nullptr);
-		
-		vkDestroyDevice(device, nullptr);
-
 		glfwDestroyWindow(window);
 		glfwTerminate();
 	}
@@ -440,15 +473,18 @@ private:
 	GLFWwindow* window;
 	VkInstance instance;
 	VkSurfaceKHR surface;
-	VkSwapchainKHR swapchain;
-
+	
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 	VkDevice device; //logical device opposed to physical device
 	
 	VkQueue graphicsQueue;
 	VkQueue presentQueue;
 
+	VkSwapchainKHR swapchain;
 	std::vector<VkImage> swapchainImages; //auto cleaned by destroying the swapchain
+	std::vector<VkImageView> swapchainImageViews; //views = how to "view" an image
+	VkFormat swapchainImageFormat;
+	VkExtent2D swapchainExtent;
 };
 
 int main(){
