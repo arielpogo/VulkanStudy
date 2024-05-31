@@ -10,6 +10,7 @@
 #include <set>
 #include <limits>
 #include <algorithm>
+#include <fstream>
 
 #include <cstring>
 #include <cstdint>
@@ -26,6 +27,21 @@ const std::vector<const char*> validationLayers = {
 const std::vector<const char*> deviceExtensions = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
+
+static std::vector<char> binFileToByteVector(const std::string& filename){
+	std::ifstream file(filename, std::ios::ate | std::ios::binary); //ate -> start at end -> to see read pos -> to det size of file -> to allocate a buffer
+
+	if(!file.is_open()) throw std::runtime_error("Failed to open binary file.");
+
+	size_t fileSize = (size_t) file.tellg();
+	std::vector<char> buffer(fileSize);
+
+	file.seekg(0);
+	file.read(buffer.data(), fileSize);
+
+	file.close();
+	return buffer;
+}
 
 #ifndef DEBUG
 	const bool enableValidationLayers = false;
@@ -58,6 +74,43 @@ public:
 	}
 	
 private:
+	GLFWwindow* window;
+	VkInstance instance;
+	VkSurfaceKHR surface;
+	
+	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+	VkDevice device; //logical device opposed to physical device
+	
+	VkQueue graphicsQueue;
+	VkQueue presentQueue;
+
+	VkSwapchainKHR swapchain;
+	std::vector<VkImage> swapchainImages; //auto cleaned by destroying the swapchain
+	std::vector<VkImageView> swapchainImageViews; //views = how to "view" an image
+	VkFormat swapchainImageFormat;
+	VkExtent2D swapchainExtent;
+
+	VkPipelineLayout pipelineLayout;
+
+	void mainLoop(){
+		while(!glfwWindowShouldClose(window)){
+			glfwPollEvents();
+		}
+	}
+
+	void cleanup(){
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
+		for(auto imageView : swapchainImageViews) vkDestroyImageView(device, imageView, nullptr);
+
+		vkDestroySwapchainKHR(device, swapchain, nullptr); //swapchain must be deleted before the surface
+		vkDestroyDevice(device, nullptr); //physical dev. handler is implicitly deleted, no need to do anything
+		vkDestroySurfaceKHR(instance, surface, nullptr); //surface must be deleted before the instance
+		vkDestroyInstance(instance, nullptr);
+		glfwDestroyWindow(window);
+		glfwTerminate();
+	}
+
 	void initWindow(){
 		glfwInit(); //init glfw library
 		
@@ -75,6 +128,7 @@ private:
 		createLogicalDevice();
 		createSwapchain();
 		createImageViews();
+		createGraphicsPipeline();
 	}
 
 	void createInstance(){
@@ -453,38 +507,135 @@ private:
 		}
 	}
 
-	void mainLoop(){
-		while(!glfwWindowShouldClose(window)){
-			glfwPollEvents();
-		}
+	void createGraphicsPipeline(){
+		std::vector<char> vertShaderCode = binFileToByteVector("shaders/vert.spv");
+		std::vector<char> fragShaderCode = binFileToByteVector("shaders/frag.spv");
+		if(DEBUG) std::cout << "vert: " << vertShaderCode.size() << " bytes frag: " << fragShaderCode.size() << " bytes\n";
+
+		//these are only needed at graphics pipeline creation time, so are destroyed at the end of this function
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main"; //entrypoint name. We can combine multiple shaders into one module and change this value for whatever we need to, if we wanted to
+		//vertShaderStageInfo.pSpecializationInfo can be used to set constants at pipeline creation rather than at render time. Optional to set.
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStage[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+		//info about the vertex data provided
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputInfo.vertexBindingDescriptionCount = 0;
+		vertexInputInfo.pVertexBindingDescriptions = nullptr; //optional
+		vertexInputInfo.vertexAttributeDescriptionCount = 0;
+		vertexInputInfo.pVertexAttributeDescriptions = nullptr; //optional
+
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = (float) swapchainExtent.width;
+		viewport.height = (float) swapchainExtent.height;
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+
+		//scissor = where pixels are actually stored (filters out what is not needed)
+		VkRect2D scissor{};
+		scissor.offset = {0, 0};
+		scissor.extent = swapchainExtent;
+
+		//things about the render pipeline we want control over during runtime (most everything else is baked and immutable)
+		std::vector<VkDynamicState> dynamicStates = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR
+		};
+
+		VkPipelineDynamicStateCreateInfo dynamicState{};
+		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+		dynamicState.pDynamicStates = dynamicStates.data();
+
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; //triangles from every 3 verticies without reuse
+		inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+		VkPipelineViewportStateCreateInfo viewportState{};
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1;
+		viewportState.scissorCount = 1;
+		//if you want it to be static:
+		//viewportState.pViewports = &viewport;
+		//viewportState.pScissors = &scissor;
+
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE;
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL; //or wireframe, etc., req. enabling a gpu feature
+		rasterizer.lineWidth = 1.0f;
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; //cull back faces
+		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE; //vertex order to det. front and back
+		rasterizer.depthBiasEnable = VK_FALSE;
+		//optional
+		rasterizer.depthBiasConstantFactor = 0.0f;
+		rasterizer.depthBiasClamp = 0.0f;
+		rasterizer.depthBiasSlopeFactor = 0.0f;
+
+		VkPipelineMultisampleStateCreateInfo multisampling{};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+		//optional
+		multisampling.minSampleShading = 1.0f; 
+		multisampling.pSampleMask = nullptr;
+		multisampling.alphaToCoverageEnable = VK_FALSE;
+		multisampling.alphaToOneEnable = VK_FALSE;
+
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_A_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE;
+		//optional
+		colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+		colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+		colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+		colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+		colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+		colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		//optional
+		pipelineLayoutInfo.setLayoutCount = 0;
+		pipelineLayoutInfo.pSetLayouts = nullptr;
+		pipelineLayoutInfo.pushConstantRangeCount = 0;
+		pipelineLayoutInfo.pPushConstantRanges = nullptr;
+
+		if(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) throw std::runtime_error("Failed to create pipeline layout.\n");
+
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
 	}
 
-	void cleanup(){
-		for(auto imageView : swapchainImageViews) vkDestroyImageView(device, imageView, nullptr);
+	VkShaderModule createShaderModule(const std::vector<char>& code){
+		VkShaderModuleCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+		createInfo.codeSize = code.size();
+		createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data()); //data is aligned in worst case scenario in an std::vector, we're good
 
-		vkDestroySwapchainKHR(device, swapchain, nullptr); //swapchain must be deleted before the surface
-		vkDestroyDevice(device, nullptr); //physical dev. handler is implicitly deleted, no need to do anything
-		vkDestroySurfaceKHR(instance, surface, nullptr); //surface must be deleted before the instance
-		vkDestroyInstance(instance, nullptr);
-		glfwDestroyWindow(window);
-		glfwTerminate();
+		VkShaderModule shaderModule;
+		if(vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) throw std::runtime_error("Failed to create shader module.\n");
+
+		return shaderModule;
 	}
-
-	GLFWwindow* window;
-	VkInstance instance;
-	VkSurfaceKHR surface;
-	
-	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-	VkDevice device; //logical device opposed to physical device
-	
-	VkQueue graphicsQueue;
-	VkQueue presentQueue;
-
-	VkSwapchainKHR swapchain;
-	std::vector<VkImage> swapchainImages; //auto cleaned by destroying the swapchain
-	std::vector<VkImageView> swapchainImageViews; //views = how to "view" an image
-	VkFormat swapchainImageFormat;
-	VkExtent2D swapchainExtent;
 };
 
 int main(){
