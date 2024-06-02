@@ -89,8 +89,9 @@ private:
 	std::vector<VkImageView> swapchainImageViews; //views = how to "view" an image
 	VkFormat swapchainImageFormat;
 	VkExtent2D swapchainExtent;
-
+	VkRenderPass renderPass;
 	VkPipelineLayout pipelineLayout;
+	VkPipeline graphicsPipeline;
 
 	void mainLoop(){
 		while(!glfwWindowShouldClose(window)){
@@ -99,10 +100,10 @@ private:
 	}
 
 	void cleanup(){
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-
+		vkDestroyRenderPass(device, renderPass, nullptr);
 		for(auto imageView : swapchainImageViews) vkDestroyImageView(device, imageView, nullptr);
-
 		vkDestroySwapchainKHR(device, swapchain, nullptr); //swapchain must be deleted before the surface
 		vkDestroyDevice(device, nullptr); //physical dev. handler is implicitly deleted, no need to do anything
 		vkDestroySurfaceKHR(instance, surface, nullptr); //surface must be deleted before the instance
@@ -128,6 +129,7 @@ private:
 		createLogicalDevice();
 		createSwapchain();
 		createImageViews();
+		createRenderPass();
 		createGraphicsPipeline();
 	}
 
@@ -507,6 +509,50 @@ private:
 		}
 	}
 
+	void createRenderPass(){
+		VkAttachmentDescription colorAttachment{};
+		colorAttachment.format = swapchainImageFormat;
+		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+
+		//what to do with the data in the attachment before and after rendering
+		//options for load op:
+		//LOAD_OP_LOAD: preserve the existing contents of the attachment
+		//LOAD_OP_CLEAR: clear the value to a constant at the start
+		//LOAD_OP_DONT_CARE: existing conents are undefined, we dont care about them
+		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		//options for store op:
+		//STORE_OP_STORE: rendered contents will be stored in memory and can be read later
+		//STORE_OP_DONT_CARE: conents of the frambuffer will be undefined after the rendering operation
+		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+		//we dont do anything with stencils so we dont care
+		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+		//image layout before the render pass begins
+		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; //we dont care what the previous was
+		//image layout to automatically convert to after the render pass
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+		VkAttachmentReference colorAttachmentRef{};
+		colorAttachmentRef.attachment = 0; //which attachment to reference to by index below
+		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		VkSubpassDescription subpass{};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &colorAttachmentRef; //referenced directly from fragment shader with layout(location = 0)out vec4 outColor;
+
+		VkRenderPassCreateInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colorAttachment;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+
+		if(vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) throw std::runtime_error("Failed to create render pass!\n");
+	}
+
 	void createGraphicsPipeline(){
 		std::vector<char> vertShaderCode = binFileToByteVector("shaders/vert.spv");
 		std::vector<char> fragShaderCode = binFileToByteVector("shaders/frag.spv");
@@ -529,7 +575,7 @@ private:
 		fragShaderStageInfo.module = fragShaderModule;
 		fragShaderStageInfo.pName = "main";
 
-		VkPipelineShaderStageCreateInfo shaderStage[] = {vertShaderStageInfo, fragShaderStageInfo};
+		VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
 		//info about the vertex data provided
 		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
@@ -611,6 +657,18 @@ private:
 		colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
 		colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
+		VkPipelineColorBlendStateCreateInfo colorBlending{};
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.logicOp = VK_LOGIC_OP_COPY;
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;
+		//optional
+		colorBlending.blendConstants[0] = 0.0f;
+		colorBlending.blendConstants[1] = 0.0f;
+		colorBlending.blendConstants[2] = 0.0f;
+		colorBlending.blendConstants[3] = 0.0f;
+
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		//optional
@@ -620,6 +678,28 @@ private:
 		pipelineLayoutInfo.pPushConstantRanges = nullptr;
 
 		if(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) throw std::runtime_error("Failed to create pipeline layout.\n");
+		
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = nullptr; //optional
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+
+		pipelineInfo.layout = pipelineLayout;
+		pipelineInfo.renderPass = renderPass;
+		pipelineInfo.subpass = 0;
+		//optional, for when you're copying an existing pipeline to modify it
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+		pipelineInfo.basePipelineIndex = -1;
+
+		if(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) throw std::runtime_error("Failed to create graphics pipeline.\n");
 
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
