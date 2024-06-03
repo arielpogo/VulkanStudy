@@ -17,6 +17,8 @@
 
 #define DEBUG 1
 
+static void framebufferResizeCallback(GLFWwindow*, int, int);
+
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
@@ -69,6 +71,8 @@ struct SwapchainSupportDetails{
 
 class Application{
 public:
+	bool framebufferResized = false;
+
 	void run(){
 		initWindow();
 		initVulkan();
@@ -116,18 +120,16 @@ private:
 	}
 
 	void cleanup(){
+		cleanupSwapchain();
 		for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i){	
 			vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
 			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
 			vkDestroyFence(device, inFlightFences[i], nullptr);
 		}
 		vkDestroyCommandPool(device, commandPool, nullptr); //command buffers automatically cleaned here too
-		for(auto framebuffer : swapchainFramebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
 		vkDestroyPipeline(device, graphicsPipeline, nullptr);
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, renderPass, nullptr);
-		for(auto imageView : swapchainImageViews) vkDestroyImageView(device, imageView, nullptr);
-		vkDestroySwapchainKHR(device, swapchain, nullptr); //swapchain must be deleted before the surface
 		vkDestroyDevice(device, nullptr); //physical dev. handler is implicitly deleted, no need to do anything
 		vkDestroySurfaceKHR(instance, surface, nullptr); //surface must be deleted before the instance
 		vkDestroyInstance(instance, nullptr);
@@ -140,9 +142,11 @@ private:
 		
 		//do not create an OpenGL context
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
 		window = glfwCreateWindow(HEIGHT, WIDTH, "Vulkan", nullptr, nullptr);
+		glfwSetWindowUserPointer(window, this);
+		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 	}
 
 	void initVulkan(){
@@ -455,6 +459,29 @@ private:
 
 		swapchainImageFormat = surfaceFormat.format;
 		swapchainExtent = extent;
+	}
+
+	void cleanupSwapchain(){
+		for(auto framebuffer : swapchainFramebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
+		for(auto imageView : swapchainImageViews) vkDestroyImageView(device, imageView, nullptr);
+		vkDestroySwapchainKHR(device, swapchain, nullptr); //swapchain must be deleted before the surface
+	}
+
+	void recreateSwapchain(){
+		int width = 0, height = 0;
+		glfwGetFramebufferSize(window, &width, &height);
+
+		while(width == 0 || height == 0){ //minimized app
+			glfwGetFramebufferSize(window, &width, &height);
+			glfwWaitEvents();
+		}
+
+		vkDeviceWaitIdle(device);
+
+		cleanupSwapchain();
+		createSwapchain();
+		createImageViews();
+		createFramebuffers();
 	}
 
 	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats){
@@ -821,12 +848,18 @@ private:
 		//steps to draw a frame are outlined with the comments:
 		//wait for previous frame to finish
 		vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
-		vkResetFences(device, 1, &inFlightFences[currentFrame]);
-
 
 		//acquire an image from the swap chain
 		uint32_t imageIndex;
-		vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+		VkResult result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+		if(result == VK_ERROR_OUT_OF_DATE_KHR){
+			recreateSwapchain();
+			return;
+		}
+		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) throw std::runtime_error("Failed to acquire swapchain image!\n");
+
+		vkResetFences(device, 1, &inFlightFences[currentFrame]); //only reset the fence if we are submitting work
 
 		//record a command buffer which draws the scene onto that image
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
@@ -862,7 +895,13 @@ private:
 		presentInfo.pImageIndices = &imageIndex;
 		presentInfo.pResults = nullptr; //optional
 
-		vkQueuePresentKHR(presentQueue, &presentInfo);
+		result = vkQueuePresentKHR(presentQueue, &presentInfo);
+
+		if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+			recreateSwapchain();
+			framebufferResized = false;
+		}
+		else if (result != VK_SUCCESS) throw std::runtime_error("Failed to present swapchain image\n");
 
 		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
@@ -929,3 +968,7 @@ int main(){
 	return EXIT_SUCCESS;
 }
 
+static void framebufferResizeCallback(GLFWwindow* window, int width, int height){
+	auto app = reinterpret_cast<Application*>(glfwGetWindowUserPointer(window));
+	app->framebufferResized = true;
+}
