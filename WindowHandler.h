@@ -25,5 +25,6 @@ public:
 
     ~WindowHandler(){
         glfwDestroyWindow(window);
+        glfwTerminate();
     }
 };

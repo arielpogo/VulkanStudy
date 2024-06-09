@@ -162,8 +162,8 @@ private:
 		vkDestroyRenderPass(device, renderPass, nullptr);
 		vkDestroyDevice(device, nullptr); //physical dev. handler is implicitly deleted, no need to do anything
 		vkDestroySurfaceKHR(instanceHandler->getInstance(), surface, nullptr); //surface must be deleted before the instance
+        delete instanceHandler;
 		delete windowHandler;
-		glfwTerminate();
 	}
 
 	void initVulkan(){
