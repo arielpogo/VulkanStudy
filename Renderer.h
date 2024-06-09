@@ -19,14 +19,10 @@
 #include <cstring>
 #include <cstdint>
 
+#include <WindowHandler.h>
 #include <Vertex.h>
 
 #define DEBUG 1
-
-static void framebufferResizeCallback(GLFWwindow*, int, int);
-
-const uint32_t WIDTH = 800;
-const uint32_t HEIGHT = 600;
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 uint32_t currentFrame = 0;
@@ -75,6 +71,12 @@ struct SwapchainSupportDetails{
 	std::vector<VkPresentModeKHR> presentModes;
 };
 
+struct UniformBufferObject{
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+
 const std::vector<Vertex> vertices = {
 	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
 	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
@@ -86,19 +88,24 @@ const std::vector<uint16_t> indices = {
 	0, 1, 2, 2, 3, 0
 };
 
+static void framebufferResizeCallback(GLFWwindow*, int, int);
+
 class Renderer{
 public:
 	bool framebufferResized = false;
 
 	void run(){
-		initWindow();
+		windowHandler = new WindowHandler();
+        glfwSetWindowUserPointer(windowHandler->getWindowPointer(), this);
+		glfwSetFramebufferSizeCallback(windowHandler->getWindowPointer(), framebufferResizeCallback);
+
 		initVulkan();
 		mainLoop();
 		cleanup();	
 	}
 	
 private:
-	GLFWwindow* window;
+	WindowHandler* windowHandler;
 	VkInstance instance;
 	VkSurfaceKHR surface;
 	
@@ -116,6 +123,7 @@ private:
 
 	VkRenderPass renderPass;
 
+    VkDescriptorSetLayout descriptorSetLayout;
 	VkPipelineLayout pipelineLayout;
 	VkPipeline graphicsPipeline;
 
@@ -132,8 +140,9 @@ private:
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores; //
 	std::vector<VkFence> inFlightFences; //used to block host while gpu is rendering the previous frame
+    
 	void mainLoop(){
-		while(!glfwWindowShouldClose(window)){
+		while(!glfwWindowShouldClose(windowHandler->getWindowPointer())){
 			glfwPollEvents();
 			drawFrame();
 		}
@@ -148,6 +157,7 @@ private:
 			vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
 			vkDestroyFence(device, inFlightFences[i], nullptr);
 		}
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 		vkDestroyBuffer(device, vertexBuffer, nullptr);
 		vkFreeMemory(device, vertexBufferMemory, nullptr);
 		vkDestroyBuffer(device, indexBuffer, nullptr);
@@ -159,20 +169,8 @@ private:
 		vkDestroyDevice(device, nullptr); //physical dev. handler is implicitly deleted, no need to do anything
 		vkDestroySurfaceKHR(instance, surface, nullptr); //surface must be deleted before the instance
 		vkDestroyInstance(instance, nullptr);
-		glfwDestroyWindow(window);
+		delete windowHandler;
 		glfwTerminate();
-	}
-
-	void initWindow(){
-		glfwInit(); //init glfw library
-		
-		//do not create an OpenGL context
-		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-
-		window = glfwCreateWindow(HEIGHT, WIDTH, "Vulkan", nullptr, nullptr);
-		glfwSetWindowUserPointer(window, this);
-		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 	}
 
 	void initVulkan(){
@@ -183,6 +181,7 @@ private:
 		createSwapchain();
 		createImageViews();
 		createRenderPass();
+        createDescriptorSetLayout();
 		createGraphicsPipeline();
 		createFramebuffers();
 		createCommandPool();
@@ -274,7 +273,7 @@ private:
 	}	
 
 	void createSurface(){
-		if(glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create window surface\n");
+		if(glfwCreateWindowSurface(instance, windowHandler->getWindowPointer(), nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create window surface\n");
 	}
 
 	void pickPhysicalDevice(){
@@ -497,10 +496,10 @@ private:
 
 	void recreateSwapchain(){
 		int width = 0, height = 0;
-		glfwGetFramebufferSize(window, &width, &height);
+		glfwGetFramebufferSize(windowHandler->getWindowPointer(), &width, &height);
 
 		while(width == 0 || height == 0){ //minimized app
-			glfwGetFramebufferSize(window, &width, &height);
+			glfwGetFramebufferSize(windowHandler->getWindowPointer(), &width, &height);
 			glfwWaitEvents();
 		}
 
@@ -552,7 +551,7 @@ private:
 		if(capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) return capabilities.currentExtent;
 
 		int width, height;
-		glfwGetFramebufferSize(window, &width, &height);
+		glfwGetFramebufferSize(windowHandler->getWindowPointer(), &width, &height);
 		VkExtent2D actualExtent = {
 			static_cast<uint32_t>(width),
 			static_cast<uint32_t>(height)
@@ -644,6 +643,22 @@ private:
 
 		if(vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) throw std::runtime_error("Failed to create render pass!\n");
 	}
+
+    void createDescriptorSetLayout(){
+        VkDescriptorSetLayoutBinding uboLayoutBinding{};
+        uboLayoutBinding.binding = 0;
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.descriptorCount = 1;
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.pImmutableSamplers = nullptr; //optional
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &uboLayoutBinding;
+
+        if(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) throw std::runtime_error("Failed to create descriptor set layout.\n");
+    }
 
 	void createGraphicsPipeline(){
 		std::vector<char> vertShaderCode = binFileToByteVector("shaders/vert.spv");
@@ -767,8 +782,8 @@ private:
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		//optional
-		pipelineLayoutInfo.setLayoutCount = 0;
-		pipelineLayoutInfo.pSetLayouts = nullptr;
+		pipelineLayoutInfo.setLayoutCount = 1;
+		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
 		pipelineLayoutInfo.pushConstantRangeCount = 0;
 		pipelineLayoutInfo.pPushConstantRanges = nullptr;
 
@@ -1098,6 +1113,6 @@ private:
 };
 
 static void framebufferResizeCallback(GLFWwindow* window, int width, int height){
-	auto app = reinterpret_cast<Renderer*>(glfwGetWindowUserPointer(window));
-	app->framebufferResized = true;
+    Renderer* renderer = reinterpret_cast<Renderer*>(glfwGetWindowUserPointer(window));
+    renderer->framebufferResized = true; //let the renderer know the framebuffer was resized
 }
