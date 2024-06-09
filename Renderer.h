@@ -20,6 +20,7 @@
 
 #include <WindowHandler.h>
 #include <InstanceHandler.h>
+#include <SurfaceHandler.h>
 #include <Vertex.h>
 
 #define DEBUG 1
@@ -101,7 +102,7 @@ public:
 private:
 	WindowHandler* windowHandler;
 	InstanceHandler* instanceHandler;
-	VkSurfaceKHR surface;
+	SurfaceHandler* surfaceHandler;
 	
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 	VkDevice device; //logical device opposed to physical device
@@ -161,7 +162,7 @@ private:
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, renderPass, nullptr);
 		vkDestroyDevice(device, nullptr); //physical dev. handler is implicitly deleted, no need to do anything
-		vkDestroySurfaceKHR(instanceHandler->getInstance(), surface, nullptr); //surface must be deleted before the instance
+		delete surfaceHandler; //surface must be deleted before the instance
         delete instanceHandler;
 		delete windowHandler;
 	}
@@ -169,7 +170,7 @@ private:
 	void initVulkan(){
 		instanceHandler = new InstanceHandler(validationLayers);
 
-		createSurface(); //influences what device may get picked
+		surfaceHandler = new SurfaceHandler(instanceHandler, windowHandler);
 		pickPhysicalDevice();
 		createLogicalDevice();
 		createSwapchain();
@@ -186,7 +187,7 @@ private:
 	}	
 
 	void createSurface(){
-		if(glfwCreateWindowSurface(instanceHandler->getInstance(), windowHandler->getWindowPointer(), nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create window surface\n");
+		
 	}
 
 	void pickPhysicalDevice(){
@@ -262,7 +263,7 @@ private:
 			if(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) indices.graphicsFamily = i;
 
 			VkBool32 presentSupport = false;
-			vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+			vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surfaceHandler->getSurface(), &presentSupport);
 			if(presentSupport) indices.presentFamily = i;
 			
 			if(indices.isComplete()) break;
@@ -276,22 +277,22 @@ private:
 		SwapchainSupportDetails details;
 		
 		//basic surface capabilities (min/max number of images in the swap chain, min/max width, height of images etc.)
-		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surfaceHandler->getSurface(), &details.capabilities);
 
 		uint32_t surfaceFormatCount = 0;
-		vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &surfaceFormatCount, nullptr);
+		vkGetPhysicalDeviceSurfaceFormatsKHR(device, surfaceHandler->getSurface(), &surfaceFormatCount, nullptr);
 
 		if(surfaceFormatCount != 0){
 			details.formats.resize(surfaceFormatCount);
-			vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &surfaceFormatCount, details.formats.data());
+			vkGetPhysicalDeviceSurfaceFormatsKHR(device, surfaceHandler->getSurface(), &surfaceFormatCount, details.formats.data());
 		}
 
 		uint32_t presentModeCount = 0;
-		vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+		vkGetPhysicalDeviceSurfacePresentModesKHR(device, surfaceHandler->getSurface(), &presentModeCount, nullptr);
 
 		if(presentModeCount != 0){
 			details.presentModes.resize(presentModeCount);
-			vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+			vkGetPhysicalDeviceSurfacePresentModesKHR(device, surfaceHandler->getSurface(), &presentModeCount, details.presentModes.data());
 		}
 
 		return details;
@@ -360,7 +361,7 @@ private:
 
 		VkSwapchainCreateInfoKHR createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-		createInfo.surface = surface;
+		createInfo.surface = surfaceHandler->getSurface();
 		
 		createInfo.minImageCount = imageCount;
 		createInfo.imageFormat = surfaceFormat.format;
