@@ -1,3 +1,4 @@
 VulkanStudy
 *.sh
 *.spv
+.vscode
