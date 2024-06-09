@@ -16,24 +16,16 @@
 #include <algorithm>
 #include <fstream>
 
-#include <cstring>
 #include <cstdint>
 
 #include <WindowHandler.h>
+#include <InstanceHandler.h>
 #include <Vertex.h>
 
 #define DEBUG 1
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 uint32_t currentFrame = 0;
-
-const std::vector<const char*> validationLayers = {
-	"VK_LAYER_KHRONOS_validation"
-};
-
-const std::vector<const char*> deviceExtensions = {
-	VK_KHR_SWAPCHAIN_EXTENSION_NAME
-};
 
 static std::vector<char> binFileToByteVector(const std::string& filename){
 	std::ifstream file(filename, std::ios::ate | std::ios::binary); //ate -> start at end -> to see read pos -> to det size of file -> to allocate a buffer
@@ -49,12 +41,6 @@ static std::vector<char> binFileToByteVector(const std::string& filename){
 	file.close();
 	return buffer;
 }
-
-#ifndef DEBUG
-	const bool enableValidationLayers = false;
-#else
-	const bool enableValidationLayers = true;
-#endif
 
 struct QueueFamilyIndices{
 	std::optional<uint32_t> graphicsFamily;
@@ -103,10 +89,18 @@ public:
 		mainLoop();
 		cleanup();	
 	}
+
+    const std::vector<const char*> validationLayers = {
+        "VK_LAYER_KHRONOS_validation"
+    };
+
+    const std::vector<const char*> deviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    };
 	
 private:
 	WindowHandler* windowHandler;
-	VkInstance instance;
+	InstanceHandler* instanceHandler;
 	VkSurfaceKHR surface;
 	
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
@@ -140,7 +134,7 @@ private:
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores; //
 	std::vector<VkFence> inFlightFences; //used to block host while gpu is rendering the previous frame
-    
+
 	void mainLoop(){
 		while(!glfwWindowShouldClose(windowHandler->getWindowPointer())){
 			glfwPollEvents();
@@ -167,14 +161,14 @@ private:
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyRenderPass(device, renderPass, nullptr);
 		vkDestroyDevice(device, nullptr); //physical dev. handler is implicitly deleted, no need to do anything
-		vkDestroySurfaceKHR(instance, surface, nullptr); //surface must be deleted before the instance
-		vkDestroyInstance(instance, nullptr);
+		vkDestroySurfaceKHR(instanceHandler->getInstance(), surface, nullptr); //surface must be deleted before the instance
 		delete windowHandler;
 		glfwTerminate();
 	}
 
 	void initVulkan(){
-		createInstance();
+		instanceHandler = new InstanceHandler(validationLayers);
+
 		createSurface(); //influences what device may get picked
 		pickPhysicalDevice();
 		createLogicalDevice();
@@ -189,105 +183,24 @@ private:
 		createIndexBuffer();
 		createCommandBuffers();
 		createSyncObjects();
-	}
-
-	void createInstance(){
-		if(enableValidationLayers && !checkValidationLayerSupport()) throw std::runtime_error("Validation layer(s) requested, but not available\n");
-
-		//technically optional, but provides useful optimization info to the driver
-		VkApplicationInfo appInfo{};
-		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-		appInfo.pApplicationName = "VulkanStudy";
-		appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-		appInfo.pEngineName = "No Engine";
-		appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-		appInfo.apiVersion = VK_API_VERSION_1_0;
-
-		//not optional
-		VkInstanceCreateInfo createInfo{};
-		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-		createInfo.pApplicationInfo = &appInfo;
-
-		//vulkan is platform agnostic, so an extension is needed to interact with the windowing system of the OS
-		uint32_t glfwExtensionCount = 0;
-		const char** glfwExtensions;
-
-		//glfw handles this for us
-		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
-		//count all available extensions
-		uint32_t extensionCount = 0;
-		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-		
-		//vector to hold the details of the extensions
-		std::vector<VkExtensionProperties> extensions(extensionCount);
-		//get all extensions (notice it's the same fn from before)
-		vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-
-		std::cout << "Available extensions:\n";
-		for(const auto& e : extensions) std::cout << '\t' << e.extensionName << '\n';
-			
-		createInfo.enabledExtensionCount = glfwExtensionCount;
-		createInfo.ppEnabledExtensionNames = glfwExtensions;
-
-		createInfo.enabledLayerCount = 0;
-
-		if(enableValidationLayers){
-			createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-			createInfo.ppEnabledLayerNames = validationLayers.data();
-		}
-		else createInfo.enabledLayerCount = 0;
-
-		if(vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) throw std::runtime_error("Failed to create Vulkan instance!");
-	}
-
-	bool checkValidationLayerSupport(){
-		uint32_t layerCount;
-
-		//just count
-		vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
-		std::vector<VkLayerProperties> availableLayers(layerCount);
-
-		//enumerate all available validation layers (into the vector)
-		vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
-
-		std::cout << "Available validation layers:\n";
-	       	for(const auto& availableLayer : availableLayers) std::cout << '\t' << availableLayer.layerName << '\n';
-
-		//check if each validation layer we want is available
-		bool found = false;
-		for(const char* layerName : validationLayers){
-			for(const auto& availableLayer : availableLayers){
-				if(strcmp(layerName, availableLayer.layerName) == 0){
-					found = true;
-					break;
-				}
-			}
-			if(!found) {
-				std::cout << "Unable to find validation layer: " << layerName << '\n';
-				return false;
-			}
-		}
-
-		return true;
 	}	
 
 	void createSurface(){
-		if(glfwCreateWindowSurface(instance, windowHandler->getWindowPointer(), nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create window surface\n");
+		if(glfwCreateWindowSurface(instanceHandler->getInstance(), windowHandler->getWindowPointer(), nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create window surface\n");
 	}
 
 	void pickPhysicalDevice(){
 		uint32_t deviceCount = 0;
 
 		//again, just count
-		vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+		vkEnumeratePhysicalDevices(instanceHandler->getInstance(), &deviceCount, nullptr);
 	
 		if(deviceCount == 0) throw std::runtime_error("Failed to find GPUs with Vulkan support\n");
 
 		std::vector<VkPhysicalDevice> devices(deviceCount);
 
 		//enumerate all available devices into the vector
-		vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+		vkEnumeratePhysicalDevices(instanceHandler->getInstance(), &deviceCount, devices.data());
 
 		//pick first suitable device
 		for(const auto& d : devices){
