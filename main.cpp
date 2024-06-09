@@ -1,3 +1,4 @@
+#define DEBUG 1
 #include <Renderer.h>
 
 int main(){
