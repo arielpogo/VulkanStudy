@@ -92,7 +92,7 @@ private:
 		SwapchainSupportDetails support(device, surfaceHandler);
 		swapchainAdequate = !support.formats.empty() && !support.presentModes.empty();
 
-		if(indices.isComplete() && allExtensionsSupported && swapchainAdequate){
+		if(indices.isComplete() && allExtensionsSupported && swapchainAdequate && deviceFeatures.samplerAnisotropy){
             queueFamilyIndices = new QueueFamilyIndices(indices);
             swapchainSupport = new SwapchainSupportDetails(support);
             return true;
@@ -136,6 +136,7 @@ private:
 
 		//specifying what device features are needed
 		VkPhysicalDeviceFeatures deviceFeatures{};
+		deviceFeatures.samplerAnisotropy = VK_TRUE;
 
 		//creating the logical device
 		VkDeviceCreateInfo createInfo{};

@@ -31,7 +31,7 @@
 #include "SwapchainHandler.h"
 #include "Vertex.h"
 #include "UniformBuffers.h"
-#include "TextureImage.h"
+#include "TextureHandler.h"
 #include "BufferHelpers.h"
 #include "DescriptorSets.h"
 #include "GraphicsPipelineHandler.h"
@@ -83,7 +83,7 @@ private:
 	VkCommandPool commandPool;
 	std::vector<VkCommandBuffer> commandBuffers;
 
-	TextureImage* texture;
+	TextureHandler* texture;
 
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
@@ -118,7 +118,7 @@ private:
 		swapchainHandler->createInitialFrameBuffers(renderPassHandler);
 		createCommandPool();
 
-		texture = new TextureImage("textures/image.png", deviceHandler);
+		texture = new TextureHandler("textures/image.png", deviceHandler);
 
 		createVertexBuffer();
 		createIndexBuffer();
