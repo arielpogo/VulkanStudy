@@ -4,8 +4,8 @@
 #include <GLFW/glfw3.h>
 //vulkan.h is loaded above
 
-#include <InstanceHandler.h>
-#include <WindowHandler.h>
+#include "InstanceHandler.h"
+#include "WindowHandler.h"
 
 class SurfaceHandler{
     VkSurfaceKHR surface;

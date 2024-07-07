@@ -8,11 +8,10 @@
 #include <vector>
 #include <cstdint>
 
-#include <InstanceHandler.h>
-#include <SurfaceHandler.h>
-
-#include <QueueFamilyIndices.h>
-#include <SwapchainSupportDetails.h>
+#include "InstanceHandler.h"
+#include "SurfaceHandler.h"
+#include "QueueFamilyIndices.h"
+#include "SwapchainSupportDetails.h"
 
 class DeviceHandler{
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;

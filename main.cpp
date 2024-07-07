@@ -1,12 +1,12 @@
-#define DEBUG 1
-#include <Renderer.h>
+#include "Renderer.h"
 
 int main(){
 	Renderer renderer;
 
-	try{
+	try {
 		renderer.run();
-	}catch (const std::exception& e){
+	}
+	catch (const std::exception& e) {
 		std::cerr << e.what() << '\n';
 		return EXIT_FAILURE;
 	}
