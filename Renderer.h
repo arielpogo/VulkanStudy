@@ -5,6 +5,7 @@
 //vulkan.h is loaded above
 
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include<glm/gtc/matrix_transform.hpp>
 
@@ -36,18 +37,25 @@
 #include "DescriptorSetsHandler.h"
 #include "GraphicsPipelineHandler.h"
 #include "CommandBuffersHandler.h"
+#include "DepthResourcesHandler.h"
 
 uint32_t currentFrame = 0;
 
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
+    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{ 0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{ 0.5f,  0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f,  0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+
+	{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{ 0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{ 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f,  0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
-	0, 1, 2, 2, 3, 0
+	0, 1, 2, 2, 3, 0,
+	4, 5, 6, 6, 7, 4
 };
 
 static void framebufferResizeCallback(GLFWwindow*, int, int);
@@ -111,9 +119,9 @@ private:
 		
 		commandBuffersHandler = new CommandBuffersHandler(deviceHandler);
 		texture = new TextureHandler("textures/image.png", deviceHandler, commandBuffersHandler);
-
+		
         swapchainHandler = new SwapchainHandler(windowHandler, surfaceHandler, deviceHandler);
-		renderPassHandler = new RenderPassHandler(logicalDevice, swapchainHandler->getSwapchainImageFormat());
+		renderPassHandler = new RenderPassHandler(logicalDevice, swapchainHandler->getSwapchainImageFormat(), swapchainHandler->findDepthFormat());
 		uniformBuffers = new UniformBuffers(deviceHandler, swapchainHandler);
 		descriptorSets = new DescriptorSetsHandler(logicalDevice, uniformBuffers, texture);
 		graphicsPipelineHandler = new GraphicsPipelineHandler(logicalDevice, swapchainHandler, descriptorSets->getDescriptorSetLayout(), renderPassHandler->getRenderPass());
@@ -305,9 +313,12 @@ private:
 		renderPassInfo.renderArea.offset = {0, 0};
 		renderPassInfo.renderArea.extent = swapchainHandler->getSwapchainExtent();
 		
-		VkClearValue clearColor  = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
-		renderPassInfo.clearValueCount = 1;
-		renderPassInfo.pClearValues = &clearColor;
+		std::array<VkClearValue, 2> clearValues{};
+		clearValues[0] = {{0.0f, 0.0f, 0.0f, 1.0f}}; //color attachments
+		clearValues[1] = {1.0f, 0}; //default the depth values at each pixel to the farthest depth away (far plane)
+
+		renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+		renderPassInfo.pClearValues = clearValues.data();
 
 		//to commandBuffer, record a BeginRenderPass command, using &renderPassInfo, into a primary command buffer
 		//all vkCmd functions return void; error handling is done after recording

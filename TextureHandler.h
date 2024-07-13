@@ -137,7 +137,7 @@ private:
     }
 
     void createTextureImageView(){
-        textureImageView = ImageHelpers::CreateImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, logicalDevice);
+        textureImageView = ImageHelpers::CreateImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, logicalDevice);
     }
 
     void createTextureSampler(VkPhysicalDevice& physicalDevice) {

@@ -4,6 +4,8 @@
 #include <GLFW/glfw3.h>
 //vulkan.h is loaded above
 
+class SwapchainHandler; //forward decl for DepthResourcesHandler
+
 #include <vector>
 #include <algorithm>
 
@@ -13,6 +15,7 @@
 #include "SurfaceHandler.h"
 #include "RenderPassHandler.h"
 #include "ImageHelpers.h"
+#include "DepthResourcesHandler.h"
 
 class SwapchainHandler{
     VkSwapchainKHR swapchain;
@@ -23,10 +26,13 @@ class SwapchainHandler{
 
     std::vector<VkFramebuffer> swapchainFramebuffers;
 
+	DepthResourcesHandler* depthResourcesHandler;
+
     WindowHandler* windowHandler;
     SurfaceHandler* surfaceHandler;
     DeviceHandler* deviceHandler;
     RenderPassHandler* renderPassHandler;
+	
 public:
 
     SwapchainHandler(WindowHandler* _wh, SurfaceHandler* _sh, DeviceHandler* _dh)
@@ -34,9 +40,11 @@ public:
     {
         createSwapchain();
 		createImageViews();
+		depthResourcesHandler = new DepthResourcesHandler(deviceHandler, swapchainExtent);
     }
 
     ~SwapchainHandler(){
+		delete depthResourcesHandler; //should happen right before swapchain cleaned
         cleanupSwapchain();
     }
 
@@ -44,6 +52,7 @@ public:
     inline VkFormat& getSwapchainImageFormat() { return swapchainImageFormat; }
     inline VkExtent2D& getSwapchainExtent() { return swapchainExtent; }
     inline std::vector<VkFramebuffer>& getSwapchainFramebuffers(){ return swapchainFramebuffers; }
+	inline VkFormat findDepthFormat(){ return depthResourcesHandler->findDepthFormat(); }
 
 	void recreateSwapchain(){
 		int width = 0, height = 0;
@@ -59,6 +68,8 @@ public:
 		cleanupSwapchain();
 		createSwapchain();
 		createImageViews();
+		delete depthResourcesHandler;
+		depthResourcesHandler = new DepthResourcesHandler(deviceHandler, swapchainExtent);
 		createFramebuffers();
 	}
 
@@ -70,7 +81,7 @@ public:
 		vkDestroySwapchainKHR(device, swapchain, nullptr); //swapchain must be deleted before the surface
 	}
 
-    void createInitialFrameBuffers(RenderPassHandler* _rph){
+    void createInitialFrameBuffers(RenderPassHandler*& _rph){
 		renderPassHandler = _rph;
 		createFramebuffers();
     }
@@ -189,26 +200,31 @@ private:
 		swapchainImageViews.resize(swapchainImages.size());
 
 		for(size_t i = 0; i < swapchainImages.size(); ++i){
-			swapchainImageViews[i] = ImageHelpers::CreateImageView(swapchainImages[i], swapchainImageFormat, deviceHandler->getLogicalDevice());
+			swapchainImageViews[i] = ImageHelpers::CreateImageView(swapchainImages[i], swapchainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, deviceHandler->getLogicalDevice());
 		}
 	}
 
-    void createFramebuffers(){
-		swapchainFramebuffers.resize(swapchainImageViews.size());
+	void createFramebuffers() {
+        swapchainFramebuffers.resize(swapchainImageViews.size());
 
-		for(size_t i = 0; i < swapchainImageViews.size(); ++i){
-			VkImageView attachments[] = {swapchainImageViews[i]};
+        for (size_t i = 0; i < swapchainImageViews.size(); i++) {
+            std::array<VkImageView, 2> attachments = {
+                swapchainImageViews[i],
+                depthResourcesHandler->getDepthImageView()
+            };
 
-			VkFramebufferCreateInfo framebufferInfo{};
-			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-			framebufferInfo.renderPass = renderPassHandler->getRenderPass();
-			framebufferInfo.attachmentCount = 1;
-			framebufferInfo.pAttachments = attachments;
-			framebufferInfo.width = swapchainExtent.width;
-			framebufferInfo.height = swapchainExtent.height;
-			framebufferInfo.layers = 1;
+            VkFramebufferCreateInfo framebufferInfo{};
+            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass = renderPassHandler->getRenderPass();
+            framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+            framebufferInfo.pAttachments = attachments.data();
+            framebufferInfo.width = swapchainExtent.width;
+            framebufferInfo.height = swapchainExtent.height;
+            framebufferInfo.layers = 1;
 
-			if(vkCreateFramebuffer(deviceHandler->getLogicalDevice(), &framebufferInfo, nullptr, &swapchainFramebuffers[i]) != VK_SUCCESS) throw std::runtime_error("Failed to create framebuffer!\n");
-		}
-	}
+            if (vkCreateFramebuffer(deviceHandler->getLogicalDevice(), &framebufferInfo, nullptr, &swapchainFramebuffers[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create framebuffer!");
+            }
+        }
+    }
 };
