@@ -38,25 +38,9 @@
 #include "GraphicsPipelineHandler.h"
 #include "CommandBuffersHandler.h"
 #include "DepthResourcesHandler.h"
+#include "ModelHandler.h"
 
 uint32_t currentFrame = 0;
-
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{ 0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{ 0.5f,  0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    {{-0.5f,  0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-
-	{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{ 0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{ 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    {{-0.5f,  0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
-};
-
-const std::vector<uint16_t> indices = {
-	0, 1, 2, 2, 3, 0,
-	4, 5, 6, 6, 7, 4
-};
 
 static void framebufferResizeCallback(GLFWwindow*, int, int);
 
@@ -91,6 +75,7 @@ private:
 	CommandBuffersHandler* commandBuffersHandler;
 
 	TextureHandler* texture;
+	ModelHandler* model;
 
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
@@ -118,7 +103,8 @@ private:
 		VkDevice& logicalDevice = deviceHandler->getLogicalDevice();
 		
 		commandBuffersHandler = new CommandBuffersHandler(deviceHandler);
-		texture = new TextureHandler("textures/image.png", deviceHandler, commandBuffersHandler);
+		texture = new TextureHandler(TEXTURE_PATH, deviceHandler, commandBuffersHandler);
+		model = new ModelHandler(MODEL_PATH);
 		
         swapchainHandler = new SwapchainHandler(windowHandler, surfaceHandler, deviceHandler);
 		renderPassHandler = new RenderPassHandler(logicalDevice, swapchainHandler->getSwapchainImageFormat(), swapchainHandler->findDepthFormat());
@@ -142,6 +128,7 @@ private:
 		delete renderPassHandler;
 		delete uniformBuffers;
 		delete descriptorSets;
+		delete model;
 		delete texture;
 		
 		vkDestroyBuffer(device, vertexBuffer, nullptr);
@@ -165,7 +152,7 @@ private:
 	}
 
 	void createVertexBuffer(){
-		VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+		VkDeviceSize bufferSize = sizeof(*model->getVertexData()) * model->getVertexDataSize();
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
@@ -175,7 +162,7 @@ private:
 
 		void* data;
 		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-		memcpy(data, vertices.data(), (size_t) bufferSize);
+		memcpy(data, model->getVertexData(), (size_t) bufferSize);
 		vkUnmapMemory(device, stagingBufferMemory);
 
 		BufferHelpers::CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory, deviceHandler);
@@ -187,7 +174,7 @@ private:
 	}
 
 	void createIndexBuffer(){
-		VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+		VkDeviceSize bufferSize = sizeof(*model->getIndicesData()) * model->getIndicesDataSize();
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
@@ -197,7 +184,7 @@ private:
 
 		void* data;
 		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-		memcpy(data, indices.data(), (size_t) bufferSize);
+		memcpy(data, model->getIndicesData(), (size_t) bufferSize);
 		vkUnmapMemory(device, stagingBufferMemory);
 
 		BufferHelpers::CreateBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory, deviceHandler);
@@ -329,7 +316,7 @@ private:
 		VkBuffer vertexBuffers[] = {vertexBuffer};
 		VkDeviceSize offsets[] = {0};
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 		//these are the dynamic state things specified when creating the pipeline:
 		VkViewport viewport{};
@@ -347,7 +334,7 @@ private:
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipelineHandler->getPipelineLayout(), 0, 1, &descriptorSets->getDescriptorSets()[currentFrame], 0, nullptr);
-		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(model->getIndicesDataSize()), 1, 0, 0, 0);
 
 		vkCmdEndRenderPass(commandBuffer);
 

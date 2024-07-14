@@ -4,10 +4,9 @@
 //vulkan.h is loaded above
 
 #include <glm/glm.hpp>
+#include "Globals.h"
 
 class WindowHandler{
-    const uint32_t WIDTH = 800;
-    const uint32_t HEIGHT = 600;
     GLFWwindow* window;
 
 public:
