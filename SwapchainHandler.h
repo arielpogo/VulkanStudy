@@ -200,7 +200,7 @@ private:
 		swapchainImageViews.resize(swapchainImages.size());
 
 		for(size_t i = 0; i < swapchainImages.size(); ++i){
-			swapchainImageViews[i] = ImageHelpers::CreateImageView(swapchainImages[i], swapchainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, deviceHandler->getLogicalDevice());
+			swapchainImageViews[i] = ImageHelpers::CreateImageView(swapchainImages[i], swapchainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1, deviceHandler->getLogicalDevice());
 		}
 	}
 
