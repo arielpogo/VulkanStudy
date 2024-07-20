@@ -40,6 +40,98 @@
 #include "DepthResourcesHandler.h"
 #include "ModelHandler.h"
 
+glm::mat4 correction(
+        glm::vec4(1.0f,  0.0f, 0.0f, 0.0f),
+        glm::vec4(0.0f, -1.0f, 0.0f, 0.0f),
+        glm::vec4(0.0f,  0.0f, 0.5f, 0.0f),
+        glm::vec4(0.0f,  0.0f, 0.5f, 1.0f));
+
+struct Camera {
+	UniformBuffers* uniformBuffers;
+	UniformBufferObject ubo;
+	SwapchainHandler* swapchainHandler;
+
+	Camera(DeviceHandler* _dh, SwapchainHandler* _sh) : swapchainHandler(_sh){
+		uniformBuffers = new UniformBuffers(_dh, _sh);
+		ubo.model = glm::mat4(1.0f);
+		ubo.view = glm::mat4(1.0f);
+		ubo.projection = correction * glm::perspective(glm::radians(45.0f), swapchainHandler->getSwapchainExtent().width / (float) swapchainHandler->getSwapchainExtent().height, 0.1f, 10.0f);
+		//ubo.projection[1][1] *= -1; //glm was originally for opengl which has the y clip coordinates inverted from Vulkan
+	}
+
+	void Update(uint32_t currentFrame) {
+		static auto startTime = std::chrono::high_resolution_clock::now();
+
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+		
+		ubo.model = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
+		ubo.projection = glm::perspective(glm::radians(45.0f), swapchainHandler->getSwapchainExtent().width / (float) swapchainHandler->getSwapchainExtent().height, 0.1f, 10.0f);
+		ubo.projection[1][1] *= -1; //glm was originally for opengl which has the y clip coordinates inverted from Vulkan
+		ubo.view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+
+		uniformBuffers->updateUniformBuffer(ubo, currentFrame);
+	}
+
+	glm::vec3 cameraDirection;
+	glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
+	glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+	glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+	float yaw = -90.0f;
+	float pitch = 0.0f;
+};
+
+Camera* camera;
+
+void processInput(GLFWwindow* window) {
+    //if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) glfwSetWindowShouldClose(window, true);
+
+    float cameraSpeed = 0.20f;
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) cameraSpeed += 0.30f;
+    if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) cameraSpeed /= 10.0f;
+    
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        camera->cameraPos += cameraSpeed * camera->cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        camera->cameraPos -= cameraSpeed * camera->cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        camera->cameraPos -= glm::normalize(glm::cross(camera->cameraFront, camera->cameraUp)) * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        camera->cameraPos += glm::normalize(glm::cross(camera->cameraFront, camera->cameraUp)) * cameraSpeed;
+}
+
+const float sensitivity = 0.05f;
+bool firstMouseInput = true;
+void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
+	static float lastx;
+	static float lasty;
+
+    if (firstMouseInput) {
+        lastx = xpos;
+        lasty = ypos;
+        firstMouseInput = false;
+    }
+
+    float xoffset = xpos - lastx;
+    float yoffset = lasty - ypos; //reversed since y ranges from bottom to top
+    lastx = xpos;
+    lasty = ypos;
+
+    xoffset *= sensitivity;
+    yoffset *= sensitivity;
+
+    camera->yaw += xoffset;
+    camera->pitch += yoffset;
+
+    if (camera->pitch > 89.0f) camera->pitch = 89.0f;
+    else if (camera->pitch < -89.0f) camera->pitch = -89.0f;
+
+    camera->cameraDirection.x = cos(glm::radians(camera->yaw)) * cos(glm::radians(camera->pitch));
+    camera->cameraDirection.y = sin(glm::radians(camera->pitch));
+    camera->cameraDirection.z = sin(glm::radians(camera->yaw)) * cos(glm::radians(camera->pitch));
+    camera->cameraFront = glm::normalize(camera->cameraDirection);
+}
+
 uint32_t currentFrame = 0;
 
 static void framebufferResizeCallback(GLFWwindow*, int, int);
@@ -50,8 +142,11 @@ public:
 
 	void run(){
 		windowHandler = new WindowHandler();
-        glfwSetWindowUserPointer(windowHandler->getWindowPointer(), this);
-		glfwSetFramebufferSizeCallback(windowHandler->getWindowPointer(), framebufferResizeCallback);
+		GLFWwindow* window = windowHandler->getWindowPointer();
+        glfwSetWindowUserPointer(window, this);
+		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED); //FPS camera input
+    	glfwSetCursorPosCallback(window, mouse_callback);
 
 		initVulkan();
 		mainLoop();
@@ -69,7 +164,7 @@ private:
     DeviceHandler* deviceHandler;
 	SwapchainHandler* swapchainHandler;
 	RenderPassHandler* renderPassHandler;
-	UniformBuffers* uniformBuffers;
+	//UniformBuffers* uniformBuffers;
 	DescriptorSetsHandler* descriptorSets;
 	GraphicsPipelineHandler* graphicsPipelineHandler;
 	CommandBuffersHandler* commandBuffersHandler;
@@ -99,20 +194,19 @@ private:
 		instanceHandler = new InstanceHandler(validationLayers);
 		surfaceHandler = new SurfaceHandler(instanceHandler, windowHandler);
         deviceHandler = new DeviceHandler(instanceHandler, surfaceHandler, validationLayers);
-
 		VkDevice& logicalDevice = deviceHandler->getLogicalDevice();
+
+		swapchainHandler = new SwapchainHandler(windowHandler, surfaceHandler, deviceHandler);
+		renderPassHandler = new RenderPassHandler(logicalDevice, swapchainHandler->getSwapchainImageFormat(), swapchainHandler->findDepthFormat());
+		swapchainHandler->createInitialFrameBuffers(renderPassHandler);
 		
 		commandBuffersHandler = new CommandBuffersHandler(deviceHandler);
+		camera = new Camera(deviceHandler, swapchainHandler);
 		texture = new TextureHandler(TEXTURE_PATH, deviceHandler, commandBuffersHandler);
-		model = new ModelHandler(MODEL_PATH);
+		descriptorSets = new DescriptorSetsHandler(logicalDevice, camera->uniformBuffers, texture);
 		
-        swapchainHandler = new SwapchainHandler(windowHandler, surfaceHandler, deviceHandler);
-		renderPassHandler = new RenderPassHandler(logicalDevice, swapchainHandler->getSwapchainImageFormat(), swapchainHandler->findDepthFormat());
-		uniformBuffers = new UniformBuffers(deviceHandler, swapchainHandler);
-		descriptorSets = new DescriptorSetsHandler(logicalDevice, uniformBuffers, texture);
 		graphicsPipelineHandler = new GraphicsPipelineHandler(logicalDevice, swapchainHandler, descriptorSets->getDescriptorSetLayout(), renderPassHandler->getRenderPass());
-		swapchainHandler->createInitialFrameBuffers(renderPassHandler);
-
+		model = new ModelHandler(MODEL_PATH);
 		createVertexBuffer();
 		createIndexBuffer();
 		createSyncObjects();
@@ -126,7 +220,8 @@ private:
 		delete swapchainHandler;
 		delete graphicsPipelineHandler;
 		delete renderPassHandler;
-		delete uniformBuffers;
+		delete camera;
+		//delete uniformBuffers;
 		delete descriptorSets;
 		delete model;
 		delete texture;
@@ -233,7 +328,9 @@ private:
             throw std::runtime_error("failed to acquire swap chain image!");
         }
 
-        uniformBuffers->updateUniformBuffer(currentFrame);
+        //uniformBuffers->updateUniformBuffer(currentFrame);
+		processInput(windowHandler->getWindowPointer());
+		camera->Update(currentFrame);
 
         vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
@@ -256,9 +353,8 @@ private:
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
-        if (vkQueueSubmit(deviceHandler->getGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to submit draw command buffer!");
-        }
+        if (vkQueueSubmit(deviceHandler->getGraphicsQueue(), 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS)
+			throw std::runtime_error("failed to submit draw command buffer!");
 
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
